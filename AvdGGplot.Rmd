@@ -1,0 +1,181 @@
+---
+title: "Advanced GGplot"
+output: html_document
+date: "2026-10-29"
+---
+
+
+
+```{r setup, include=FALSE}
+library(RColorBrewer)
+library(ggplot2)
+library(viridis)
+library(terra)
+library(geodata)
+library(tidyterra)
+library(faraway)
+library(tigris)
+library(sf)
+library(basemaps)
+library(dplyr)
+
+#dataset of plant species diversity on 30 Galapagos Islands
+data(gala)
+?faraway::gala
+View(gala)
+
+```
+
+
+## Color Palettes
+A lot of options out there, check this package out that tried to compile all the different color palettes in R if interested (https://github.com/EmilHvitfeldt/paletteer). I don't experiment too much here but do often find myself using RColor Brewer and Viridis, because both of these packages offer color-blind friendly palettes.
+
+packages used- `RColorBrewer` and `viridis`
+```{r colors message=FALSE}
+RColorBrewer::display.brewer.all(colorblindFriendly = TRUE)
+
+
+
+
+n <- 256
+image(1:n, 1, as.matrix(1:n), col = magma(n), 
+      xlab = "Magma Palette", ylab = "", xaxt = "n", yaxt = "n", bty = "n")
+image(1:n, 1, as.matrix(1:n), col = viridis(n), 
+      xlab = "Viridis Palette", ylab = "", xaxt = "n", yaxt = "n", bty = "n")
+image(1:n, 1, as.matrix(1:n), col = turbo(n), 
+      xlab = "Turbo Palette", ylab = "", xaxt = "n", yaxt = "n", bty = "n")
+
+
+temp_raster <- geodata::worldclim_global(var = "tmin", res = 10, path = tempdir())
+jan_tmin <- temp_raster[[1]]
+ggplot() +
+  geom_spatraster(data=jan_tmin)
+
+ggplot() +
+  geom_spatraster(data=jan_tmin) +
+  scale_fill_viridis_c(na.value = "transparent", option="D") +
+  labs(fill = "Minimum January Temperature")
+?scale_fill_viridis
+
+ggplot() +
+  geom_spatraster(data=jan_tmin) +
+  scale_fill_viridis_c(na.value = "transparent", option="D") +
+  labs(fill = expression("Minimum January Temperature (" * degree * "C)")) #long legend label
+
+```
+
+
+## Effects plots
+```{r}
+gala <- gala%>%mutate(across(Area:Adjacent, ~as.numeric(scale(.x)), .names = "{.col}_sc"))
+m1 <- glm(Species ~ Area_sc + Nearest_sc + Elevation_sc, data=gala, family = poisson())
+summary(m1)
+
+
+
+Betas <- cbind.data.frame("Term"=rownames(confint(m1)),"Estimate"=coef(m1), confint(m1))
+colnames(Betas)[3:4] <- c("Lower_CI", "Upper_CI")
+
+
+ggplot(Betas[-1,], aes(x = Estimate, y = Term)) +
+  # Draw a dashed reference line at 0 (common for effect sizes/coefficients)
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red", linewidth = 0.8) +
+  # Draw the point estimates and interval ranges
+  geom_pointrange(aes(xmin = Lower_CI, xmax = Upper_CI, color = Term), size = 0.6) +
+  scale_color_brewer(palette="Set2") +
+  # Clean up labels and apply a minimalist theme
+  labs(
+    title = "Caterpillar Plot of Estimates",
+    x = "Estimate Value"
+  ) +
+  theme_minimal() +
+  theme(axis.title.y = element_blank(),
+        legend.position = "none",
+        plot.title = element_text(hjust = 0.5)) +
+  scale_y_discrete(labels = rev(c("Area", "Elevation", "Nearest\nIsland")),limits = rev)
+
+newdata <- expand.grid("Area_sc"=seq(min(gala$Area_sc), max(gala$Area_sc), length.out = 100), "Nearest_sc"=mean(gala$Nearest_sc), "Elevation_sc"=mean(gala$Elevation_sc))
+m1preds <- predict(m1, newdata=newdata, se.fit=TRUE, type="response")
+newdata <- cbind(newdata, "fit"=m1preds$fit, "se"=m1preds$se.fit)
+newdata$Area <- newdata$Area_sc * sd(gala$Area) + mean(gala$Area)
+
+ggplot(newdata, aes(x=Area_sc, y=fit)) +
+  geom_line(color="blue") +
+  geom_ribbon(aes(ymin = fit - 1.96*se, ymax = fit + 1.96*se), alpha=0.7, fill="lightblue") +
+  labs(y="Number of Plant Species")
+
+RColorBrewer::brewer.pal(n=8,name="Set2")
+ggplot(newdata, aes(x=Area, y=fit)) +
+  geom_line(color="#66C2A5", size=1) +
+  geom_ribbon(aes(ymin = fit - 1.96*se, ymax = fit + 1.96*se), alpha=0.6, fill="#66C2A5") +
+  labs(y="Number of Plant Species")
+
+
+m2 <- glm(Species ~ Area_sc * Nearest_sc, data=gala, family = poisson())
+summary(m2)
+
+
+newdata2 <- expand.grid("Area_sc"=seq(quantile(gala$Area_sc, 0.1), quantile(gala$Area_sc, 0.9), length.out = 100), "Nearest_sc"=quantile(gala$Nearest_sc, c(0.25, 0.75)))
+m2preds <- predict(m2, newdata=newdata2, se.fit=TRUE, type="response")
+newdata2 <- cbind(newdata2, "fit"=m2preds$fit, "se"=m2preds$se.fit)
+newdata2$Area <- newdata2$Area_sc * sd(gala$Area) + mean(gala$Area)
+newdata2$Nearest <- ifelse(newdata2$Nearest_sc == newdata2$Nearest_sc[1], "Close", "Far")
+
+ggplot(newdata2, aes(x=Area, y=fit, color=Nearest, group=Nearest)) +
+  geom_line(size=1) +
+  geom_ribbon(aes(ymin = fit - 1.96*se, ymax = fit + 1.96*se, fill=Nearest), alpha=0.6) +
+  scale_fill_brewer(palette="Set2") +
+  scale_color_brewer(palette="Set2") +
+  labs(y="Number of Plant Species",
+       color="Proximity to\nNearest Island",
+       fill="Proximity to\nNearest Island")
+
+```
+
+
+
+
+## Spatial plotting with multiple layers
+packages used- `terra`, `sf`, `tigris`, `basemaps`, `tidyterra`
+```{r spatial plot}
+utah_sf <- states(cb = TRUE, resolution = "20m")%>%filter(NAME == "Utah")
+utah_counties <- counties(cb = TRUE, resolution = "20m", year = 2020)%>%filter(STATE_NAME == "Utah")%>%st_transform(., crs=crs(jan_tmin))
+utah_vect <- vect(utah_sf)
+ut_crop <- terra::crop(jan_tmin, project(utah_vect, crs(jan_tmin)), mask=TRUE)
+
+ggplot() +
+  geom_spatraster(data=ut_crop) +
+  scale_fill_viridis_c(na.value = "transparent", option="D") +
+  geom_sf(data=utah_counties, fill=NA, color="black") +
+  labs(fill = expression("Minimum January Temperature (" * degree * "C)")) #long legend label
+
+
+sf_use_s2()
+utahbbox <- st_bbox(st_buffer(st_transform(utah_sf, crs=3857), dist = 10000))
+names(utahbbox) <- c("left", "bottom", "right", "top")
+
+basemap <- basemap_raster(utahbbox, map_service = "esri", map_type = "world_imagery")
+basemap_terra <- rast(basemap)
+ggplot() +
+  geom_spatraster_rgb(data = basemap_terra) +
+  geom_spatraster(data=ut_crop) +
+  scale_fill_viridis_c(na.value = "transparent", option="D") +
+  geom_sf(data=utah_counties, fill=NA, color="black") +
+  labs(fill = expression("Minimum January Temperature (" * degree * "C)")) #long legend label
+
+
+samplepts <- st_sample(utah_sf, size=500)
+
+ggplot() +
+  geom_spatraster_rgb(data = basemap_terra) +
+  geom_spatraster(data=ut_crop) +
+  scale_fill_viridis_c(na.value = "transparent", option="D") +
+  geom_sf(data=utah_counties, fill=NA, color="black") +
+  geom_sf(data=samplepts) +
+  labs(fill = expression("Minimum January Temperature (" * degree * "C)")) +
+  geom_sf_text(data=utah_counties, aes(label=NAME)) + #long legend label 
+  coord_sf() # ensures all layers use common CRS can define it or taken from first layer with a CRS
+
+
+```
+
