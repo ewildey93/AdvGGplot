@@ -18,6 +18,8 @@ library(tigris)
 library(sf)
 library(basemaps)
 library(dplyr)
+library(marginaleffects)
+library(rphylopic)
 
 #dataset of plant species diversity on 30 Galapagos Islands
 data(gala)
@@ -129,6 +131,28 @@ ggplot(newdata2, aes(x=Area, y=fit, color=Nearest, group=Nearest)) +
   labs(y="Number of Plant Species",
        color="Proximity to\nNearest Island",
        fill="Proximity to\nNearest Island")
+
+
+uuid <- get_uuid(name = "Chelonoidis nigra")
+# Get the image for that UUID
+img <- get_phylopic(uuid = uuid)
+
+
+ggplot(newdata2, aes(x=Area, y=fit, color=Nearest, group=Nearest)) +
+  geom_line(size=1) +
+  geom_ribbon(aes(ymin = fit - 1.96*se, ymax = fit + 1.96*se, fill=Nearest), alpha=0.6) +
+  scale_fill_brewer(palette="Set2") +
+  scale_color_brewer(palette="Set2") +
+  labs(y="Number of Plant Species",
+       color="Proximity to\nNearest Island",
+       fill="Proximity to\nNearest Island") +
+   add_phylopic(img = img, x = 100, y = 110, height = 15)
+
+
+get_attribution(uuid = uuid, text = TRUE)
+
+plot_predictions(m2, condition = c("Area_sc", "Nearest_sc"))
+plot_predictions(m2, condition = c("Area_sc", "Nearest_sc")) + ylab("Number of Species")
 
 ```
 
